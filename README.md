@@ -45,7 +45,7 @@ tokenizer = T5Tokenizer.from_pretrained('Rostlab/ProstT5', do_lower_case=False)
 model = T5EncoderModel.from_pretrained("Rostlab/ProstT5").to(device)
 
 # only GPUs support half-precision currently; if you want to run on CPU use full-precision (not recommended, much slower)
-model.float() if device.type=='cpu' else model.half()
+model.full() if device=='cpu' else model.half()
 
 # prepare your protein sequences/structures as a list.
 # Amino acid sequences are expected to be upper-case ("PRTEINO" below)
@@ -58,27 +58,24 @@ sequence_examples = [" ".join(list(re.sub(r"[UZOB]", "X", sequence))) for sequen
 # The direction of the translation is indicated by two special tokens:
 # if you go from AAs to 3Di (or if you want to embed AAs), you need to prepend "<AA2fold>"
 # if you go from 3Di to AAs (or if you want to embed 3Di), you need to prepend "<fold2AA>"
-sequence_examples = [ "<AA2fold>" + " " + s if s.isupper() else "<fold2AA>" + " " + s # this expects 3Di sequences to be already lower-case
+sequence_examples = ["<AA2fold>" + " " + s if s.isupper() else "<fold2AA>" + " " + s # this expects 3Di sequences to be already lower-case
                       for s in sequence_examples
                     ]
 
 # tokenize sequences and pad up to the longest sequence in the batch
-ids = tokenizer.batch_encode_plus(sequence_examples,
-                                  add_special_tokens=True,
-                                  padding="longest",
-                                  return_tensors='pt').to(device)
+ids = tokenizer(sequence_examples, add_special_tokens=True, padding="longest",return_tensors='pt').to(device)
 
 # generate embeddings
 with torch.no_grad():
-    embedding_repr = model(
+    embedding_rpr = model(
               ids.input_ids, 
               attention_mask=ids.attention_mask
               )
 
 # extract residue embeddings for the first ([0,:]) sequence in the batch and remove padded & special tokens, incl. prefix ([0,1:8]) 
-emb_0 = embedding_repr.last_hidden_state[0,1:8] # shape (7 x 1024)
+emb_0 = embedding_rpr.last_hidden_state[0,1:8] # shape (7 x 1024)
 # same for the second ([1,:]) sequence but taking into account different sequence lengths ([1,:6])
-emb_1 = embedding_repr.last_hidden_state[1,1:6] # shape (5 x 1024)
+emb_1 = embedding_rpr.last_hidden_state[1,1:6] # shape (5 x 1024)
 
 # if you want to derive a single representation (per-protein embedding) for the whole protein
 emb_0_per_protein = emb_0.mean(dim=0) # shape (1024)
@@ -98,7 +95,7 @@ tokenizer = T5Tokenizer.from_pretrained('Rostlab/ProstT5', do_lower_case=False)
 model = AutoModelForSeq2SeqLM.from_pretrained("Rostlab/ProstT5").to(device)
 
 # only GPUs support half-precision currently; if you want to run on CPU use full-precision (not recommended, much slower)
-model.float() if device.type=='cpu' else model.half()
+model.full() if device=='cpu' else model.half()
 
 # prepare your protein sequences/structures as a list.
 # Amino acid sequences are expected to be upper-case ("PRTEINO" below)
@@ -111,17 +108,17 @@ max_len = max([ len(s) for s in sequence_examples])
 sequence_examples = [" ".join(list(re.sub(r"[UZOB]", "X", sequence))) for sequence in sequence_examples]
 
 # add pre-fixes accordingly. For the translation from AAs to 3Di, you need to prepend "<AA2fold>"
-sequence_examples = [ "<AA2fold>" + " " + s for s in sequence_examples]
+sequence_examples = ["<AA2fold>" + " " + s for s in sequence_examples]
 
 # tokenize sequences and pad up to the longest sequence in the batch
-ids = tokenizer.batch_encode_plus(sequence_examples,
+ids = tokenizer(sequence_examples,
                                   add_special_tokens=True,
                                   padding="longest",
                                   return_tensors='pt').to(device)
 
 # Generation configuration for "folding" (AA-->3Di)
 gen_kwargs_aa2fold = {
-                  "do_sample": True,
+                  "do_sample": True, 
                   "num_beams": 3, 
                   "top_p" : 0.95, 
                   "temperature" : 1.2, 
@@ -141,17 +138,17 @@ with torch.no_grad():
               **gen_kwargs_aa2fold
   )
 # Decode and remove white-spaces between tokens
-decoded_translations = tokenizer.batch_decode( translations, skip_special_tokens=True )
-structure_sequences = [ "".join(ts.split(" ")) for ts in decoded_translations ] # predicted 3Di strings
+decoded_translations = tokenizer.batch_decode(translations, skip_special_tokens=True)
+structure_sequences = ["".join(ts.split(" ")) for ts in decoded_translations] # predicted 3Di strings
 
 # Now we can use the same model and invert the translation logic
 # to generate an amino acid sequence from the predicted 3Di-sequence (3Di-->AA)
 
 # add pre-fixes accordingly. For the translation from 3Di to AA (3Di-->AA), you need to prepend "<fold2AA>"
-sequence_examples_backtranslation = [ "<fold2AA>" + " " + s for s in decoded_translations]
+sequence_examples_backtranslation = ["<fold2AA>" + " " + s for s in decoded_translations]
 
 # tokenize sequences and pad up to the longest sequence in the batch
-ids_backtranslation = tokenizer.batch_encode_plus(sequence_examples_backtranslation,
+ids_backtranslation = tokenizer(sequence_examples_backtranslation,
                                   add_special_tokens=True,
                                   padding="longest",
                                   return_tensors='pt').to(device)
@@ -159,9 +156,9 @@ ids_backtranslation = tokenizer.batch_encode_plus(sequence_examples_backtranslat
 # Example generation configuration for "inverse folding" (3Di-->AA)
 gen_kwargs_fold2AA = {
             "do_sample": True,
-            "top_p" : 0.85,
-            "temperature" : 1.0,
-            "top_k" : 3,
+            "top_p" : 0.90,
+            "temperature" : 1.1,
+            "top_k" : 6,
             "repetition_penalty" : 1.2,
 }
 
@@ -175,10 +172,10 @@ with torch.no_grad():
               #early_stopping=True, # stop early if end-of-text token is generated; only needed for beam-search
               num_return_sequences=1, # return only a single sequence
               **gen_kwargs_fold2AA
-)
+  )
 # Decode and remove white-spaces between tokens
-decoded_backtranslations = tokenizer.batch_decode( backtranslations, skip_special_tokens=True )
-aminoAcid_sequences = [ "".join(ts.split(" ")) for ts in decoded_backtranslations ] # predicted amino acid strings
+decoded_backtranslations = tokenizer.batch_decode(backtranslations, skip_special_tokens=True)
+aminoAcid_sequences = ["".join(ts.split(" ")) for ts in decoded_backtranslations] # predicted amino acid strings
 
 ```
 
